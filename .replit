@@ -28,7 +28,32 @@ author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "workflow.run"
+args = "Install dependencies"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Push database schema"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
 args = "Start application"
+
+[[workflows.workflow]]
+name = "Install dependencies"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "npm install"
+
+[[workflows.workflow]]
+name = "Push database schema"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "npm run db:push"
+waitForPort = 0
 
 [[workflows.workflow]]
 name = "Start application"
