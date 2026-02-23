@@ -1,6 +1,7 @@
 import type { Express } from "express";
 import type { Server } from "http";
 import { storage } from "./storage";
+import { ensureDatabaseSchema } from "./db";
 import { api } from "@shared/routes";
 import { z } from "zod";
 import OpenAI from "openai";
@@ -59,6 +60,8 @@ const coreBeliefs = [
   },
 ] as const;
 
+const FALLBACK_ENGINE_VERSION = "fallback-v2-quality-guard";
+
 function clamp(number: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, number));
 }
@@ -95,26 +98,110 @@ function computeBeliefCoherence(weight: number, revisionCount: number): number {
   return clamp((weight / 10) * 100 - revisionCount * 2, 0, 100);
 }
 
+function extractPrimaryQuestion(query: string): string {
+  const matches = query.match(/[^?]+\?/g);
+  if (matches && matches.length > 0) {
+    return matches[matches.length - 1].trim();
+  }
+  return query.trim();
+}
+
+function generateLocalCongressAnswer(query: string) {
+  const prompt = query.trim();
+  const question = extractPrimaryQuestion(prompt);
+  const lower = question.toLowerCase();
+
+  if (/(programs?|ai|systems?).*(choose|set).*(own\s+)?ethics|own\s+ethics/.test(lower)) {
+    return {
+      advocate:
+        "Programs can help evaluate ethical tradeoffs faster and more consistently than ad-hoc human debate, especially when stakes are high and time is short.",
+      skeptic:
+        "Allowing a system to choose its own ethics is risky because optimization pressure can drift values away from human intent, accountability, and rights.",
+      paradigm:
+        "A safer model is bounded autonomy: humans define constitutional guardrails, the system proposes options inside them, and critical decisions stay human-reviewable.",
+      ethics:
+        "Ethical legitimacy comes from transparent governance, appeal mechanisms, audit logs, and the ability to override or shut down behavior that violates shared norms.",
+      synthesis:
+        "Programs should not be allowed to choose their own ethics independently. They may assist ethical reasoning, but ethics authority should remain with accountable humans and institutions.",
+    };
+  }
+
+  return {
+    advocate:
+      "Your framing shows intent for principled dialogue, which is a strong foundation for high-trust collaboration.",
+    skeptic:
+      "Good intent still needs explicit boundaries, because ambiguous goals can produce confident but misaligned outcomes.",
+    paradigm:
+      "Best practice is to pair values with operational rules: define constraints, decision rights, escalation paths, and failure handling.",
+    ethics:
+      "Respect for autonomy, non-maleficence, fairness, and accountability should be testable in behavior, not just stated in policy.",
+    synthesis:
+      `Direct answer: ${question}`,
+  };
+}
+
 function composeCongressVoiceFallback(
   query: string,
   route: string,
   strategy: string,
   beliefs: Awaited<ReturnType<typeof storage.getBeliefNodes>>,
 ): string {
+  const congress = generateLocalCongressAnswer(query);
   const topBeliefs = beliefs
     .slice(0, 3)
     .map((belief) => `${belief.stance} (${belief.weight}/10)`)
     .join(", ");
 
   return [
-    "Advocate: I can see a constructive path forward that preserves momentum and growth.",
-    "Skeptic: I want to test assumptions, protect against blind spots, and stay anchored to facts.",
-    "Paradigm (Ego): I balance these tensions through Sovern's internal definitions and current context.",
-    "Ethics: I check that the answer remains values-aligned and sustainable over time.",
-    `Synthesis: For this ${route} request using ${strategy}, I will respond directly and transparently.`,
+    `Engine: ${FALLBACK_ENGINE_VERSION}`,
+    `Advocate: ${congress.advocate}`,
+    `Skeptic: ${congress.skeptic}`,
+    `Paradigm (Ego): ${congress.paradigm}`,
+    `Ethics: ${congress.ethics}`,
+    `Synthesis: ${congress.synthesis}`,
+    `Mode: ${route} routing with ${strategy}.`,
     `Belief context: ${topBeliefs || "core values active"}.`,
-    `Response: ${query}`,
   ].join("\n\n");
+}
+
+function normalizeText(text: string): string {
+  return text.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function hasDirectAnswerSignal(text: string): boolean {
+  return /(should|must|can|cannot|yes|no|recommend|best|answer)/i.test(text);
+}
+
+function isLowQualityResponse(response: string, query: string): boolean {
+  const normalizedResponse = normalizeText(response);
+  const normalizedQuery = normalizeText(query);
+
+  const genericPhrases = [
+    "i can see a constructive path forward",
+    "i want to test assumptions",
+    "i balance these tensions",
+    "i check that the answer remains values-aligned",
+  ];
+
+  const containsGenericTemplate = genericPhrases.some((phrase) => normalizedResponse.includes(phrase));
+  const echoesPrompt = normalizedResponse.includes(normalizedQuery);
+  const missingDirectAnswer = !hasDirectAnswerSignal(response);
+
+  return containsGenericTemplate || echoesPrompt || missingDirectAnswer;
+}
+
+function qualityGuardedResponse(
+  response: string,
+  query: string,
+  route: string,
+  strategy: string,
+  beliefs: Awaited<ReturnType<typeof storage.getBeliefNodes>>,
+): string {
+  if (!isLowQualityResponse(response, query)) {
+    return response;
+  }
+
+  return composeCongressVoiceFallback(query, route, strategy, beliefs);
 }
 
 function localSynthesisFallback(
@@ -266,6 +353,8 @@ export async function registerRoutes(
   app: Express
 ): Promise<Server> {
 
+  await ensureDatabaseSchema();
+
   await seedDatabase();
 
   app.get(api.chat.list.path, async (req, res) => {
@@ -392,6 +481,14 @@ export async function registerRoutes(
       } else {
         responseContent = composeCongressVoiceFallback(input.content, route, strategy, beliefs);
       }
+
+      responseContent = qualityGuardedResponse(
+        responseContent,
+        input.content,
+        route,
+        strategy,
+        beliefs,
+      );
 
       const assistantMsg = await storage.createMessage({
         role: "assistant",
