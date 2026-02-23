@@ -6,12 +6,25 @@ import { api } from "@shared/routes";
 import { z } from "zod";
 import OpenAI from "openai";
 
-const openAiApiKey = process.env.AI_INTEGRATIONS_OPENAI_API_KEY || process.env.OPENAI_API_KEY;
-const openAiBaseUrl =
-  process.env.AI_INTEGRATIONS_OPENAI_BASE_URL || process.env.OPENAI_BASE_URL || "https://api.openai.com/v1";
+function isDummyApiKey(value?: string): boolean {
+  return !value || value.startsWith("_DUMMY_");
+}
+
+const integrationsApiKey = process.env.AI_INTEGRATIONS_OPENAI_API_KEY;
+const standardApiKey = process.env.OPENAI_API_KEY;
+
+const openAiApiKey = !isDummyApiKey(standardApiKey)
+  ? standardApiKey
+  : !isDummyApiKey(integrationsApiKey)
+    ? integrationsApiKey
+    : undefined;
+
+const openAiBaseUrl = !isDummyApiKey(standardApiKey)
+  ? process.env.OPENAI_BASE_URL || "https://api.openai.com/v1"
+  : process.env.AI_INTEGRATIONS_OPENAI_BASE_URL || process.env.OPENAI_BASE_URL || "https://api.openai.com/v1";
 const openAiModel = process.env.AI_INTEGRATIONS_OPENAI_MODEL || process.env.OPENAI_MODEL || "gpt-5.1";
 
-const hasAiConfig = Boolean(openAiApiKey && !openAiApiKey.startsWith("_DUMMY_"));
+const hasAiConfig = Boolean(openAiApiKey);
 
 const openai = hasAiConfig
   ? new OpenAI({
