@@ -6,14 +6,17 @@ import { api } from "@shared/routes";
 import { z } from "zod";
 import OpenAI from "openai";
 
-const hasAiConfig = Boolean(
-  process.env.AI_INTEGRATIONS_OPENAI_API_KEY && process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-);
+const openAiApiKey = process.env.AI_INTEGRATIONS_OPENAI_API_KEY || process.env.OPENAI_API_KEY;
+const openAiBaseUrl =
+  process.env.AI_INTEGRATIONS_OPENAI_BASE_URL || process.env.OPENAI_BASE_URL || "https://api.openai.com/v1";
+const openAiModel = process.env.AI_INTEGRATIONS_OPENAI_MODEL || process.env.OPENAI_MODEL || "gpt-5.1";
+
+const hasAiConfig = Boolean(openAiApiKey && !openAiApiKey.startsWith("_DUMMY_"));
 
 const openai = hasAiConfig
   ? new OpenAI({
-      apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-      baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
+      apiKey: openAiApiKey,
+      baseURL: openAiBaseUrl,
     })
   : null;
 
@@ -476,7 +479,7 @@ export async function registerRoutes(
       if (hasAiConfig) {
         try {
           const completion = await openai!.chat.completions.create({
-            model: "gpt-5.1",
+            model: openAiModel,
             messages: openAiMessages as any,
           });
 
@@ -515,7 +518,7 @@ export async function registerRoutes(
           if (hasAiConfig) {
             try {
               const synthesis = await openai!.chat.completions.create({
-                model: "gpt-5.1",
+                model: openAiModel,
                 response_format: { type: "json_object" },
                 messages: [
                   ...openAiMessages,
