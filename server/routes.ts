@@ -1,6 +1,6 @@
 import type { Express } from "express";
 import type { Server } from "http";
-import { storage } from "./storage";
+import { storage, fallbackToMemoryStorage } from "./storage";
 import { ensureDatabaseSchema } from "./db";
 import { api } from "@shared/routes";
 import { z } from "zod";
@@ -353,7 +353,10 @@ export async function registerRoutes(
   app: Express
 ): Promise<Server> {
 
-  await ensureDatabaseSchema();
+  const hasDatabase = await ensureDatabaseSchema();
+  if (!hasDatabase) {
+    fallbackToMemoryStorage();
+  }
 
   await seedDatabase();
 

@@ -220,4 +220,11 @@ class MemoryStorage implements IStorage {
   }
 }
 
-export const storage = db ? new DatabaseStorage() : new MemoryStorage();
+export let storage: IStorage = db ? new DatabaseStorage() : new MemoryStorage();
+
+export function fallbackToMemoryStorage() {
+  if (!(storage instanceof MemoryStorage)) {
+    console.warn("Switching to in-memory storage because database is unavailable.");
+    storage = new MemoryStorage();
+  }
+}
