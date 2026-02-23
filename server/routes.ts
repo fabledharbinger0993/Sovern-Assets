@@ -471,13 +471,19 @@ export async function registerRoutes(
       let tokens = 0;
 
       if (hasAiConfig) {
-        const completion = await openai!.chat.completions.create({
-          model: "gpt-5.1",
-          messages: openAiMessages as any,
-        });
+        try {
+          const completion = await openai!.chat.completions.create({
+            model: "gpt-5.1",
+            messages: openAiMessages as any,
+          });
 
-        responseContent = completion.choices[0]?.message?.content || responseContent;
-        tokens = completion.usage?.total_tokens || 0;
+          responseContent = completion.choices[0]?.message?.content || responseContent;
+          tokens = completion.usage?.total_tokens || 0;
+        } catch (error) {
+          console.error("Primary AI completion failed, using local fallback", error);
+          responseContent = composeCongressVoiceFallback(input.content, route, strategy, beliefs);
+          tokens = 0;
+        }
       } else {
         responseContent = composeCongressVoiceFallback(input.content, route, strategy, beliefs);
       }
@@ -504,25 +510,30 @@ export async function registerRoutes(
           let json: any = {};
 
           if (hasAiConfig) {
-            const synthesis = await openai!.chat.completions.create({
-              model: "gpt-5.1",
-              response_format: { type: "json_object" },
-              messages: [
-                ...openAiMessages,
-                { role: "assistant", content: responseContent },
-                {
-                  role: "user",
-                  content:
-                    "Return JSON with keys: logicEntry, memoryEntry, beliefUpdates.\n" +
-                    "logicEntry: { topic, paradigmWeight(0-100), debateTranscript, resolution, congressPerspectives:[{role,position,reasoning,strengthOfArgument,callNumber}], profoundInsights:[string], finalReasoning }\n" +
-                    "memoryEntry: { coreInsight, supportingEvidence:[string], tags:[string], confidenceScore(0-100), humanInsights:[{category,content,source}], selfInsights:[{category,content,confidence}], learnedPatterns:[{pattern,description,frequency,evidence}], researchNotes }\n" +
-                    "beliefUpdates: [{ stance, revisionType(challenge|strengthen|revise|weaken), revisionReason, targetWeight(1-10 optional) }]\n" +
-                    "Must align with Congress/Paradigm/Ego model and belief rules.",
-                },
-              ] as any,
-            });
+            try {
+              const synthesis = await openai!.chat.completions.create({
+                model: "gpt-5.1",
+                response_format: { type: "json_object" },
+                messages: [
+                  ...openAiMessages,
+                  { role: "assistant", content: responseContent },
+                  {
+                    role: "user",
+                    content:
+                      "Return JSON with keys: logicEntry, memoryEntry, beliefUpdates.\n" +
+                      "logicEntry: { topic, paradigmWeight(0-100), debateTranscript, resolution, congressPerspectives:[{role,position,reasoning,strengthOfArgument,callNumber}], profoundInsights:[string], finalReasoning }\n" +
+                      "memoryEntry: { coreInsight, supportingEvidence:[string], tags:[string], confidenceScore(0-100), humanInsights:[{category,content,source}], selfInsights:[{category,content,confidence}], learnedPatterns:[{pattern,description,frequency,evidence}], researchNotes }\n" +
+                      "beliefUpdates: [{ stance, revisionType(challenge|strengthen|revise|weaken), revisionReason, targetWeight(1-10 optional) }]\n" +
+                      "Must align with Congress/Paradigm/Ego model and belief rules.",
+                  },
+                ] as any,
+              });
 
-            json = JSON.parse(synthesis.choices[0]?.message?.content || "{}");
+              json = JSON.parse(synthesis.choices[0]?.message?.content || "{}");
+            } catch (error) {
+              console.error("Synthesis AI completion failed, using local fallback", error);
+              json = localSynthesisFallback(input.content, weight, route, category, strategy);
+            }
           } else {
             json = localSynthesisFallback(input.content, weight, route, category, strategy);
           }
