@@ -80,11 +80,44 @@ export const memoryEntries = pgTable("memory_entries", {
   selfInsights: jsonb("self_insights").notNull().default(sql`'[]'::jsonb`),
   learnedPatterns: jsonb("learned_patterns").notNull().default(sql`'[]'::jsonb`),
   researchNotes: text("research_notes").notNull().default(""),
+  phenomenologicalUncertainty: text("phenomenological_uncertainty"),
+  logicEntryId: integer("logic_entry_id"),
 });
 
 export const insertMemoryEntrySchema = createInsertSchema(memoryEntries).omit({ id: true, timestamp: true });
 export type InsertMemoryEntry = z.infer<typeof insertMemoryEntrySchema>;
 export type MemoryEntry = typeof memoryEntries.$inferSelect;
+
+export const incongruentEntries = pgTable("incongruent_entries", {
+  id: serial("id").primaryKey(),
+  messageId: integer("message_id").notNull(),
+  congressConclusion: text("congress_conclusion").notNull(),
+  egoExpression: text("ego_expression").notNull(),
+  reasoning: text("reasoning").notNull(),
+  relationalContext: text("relational_context").notNull(),
+  timestamp: timestamp("timestamp").defaultNow().notNull(),
+});
+
+export const insertIncongruentEntrySchema = createInsertSchema(incongruentEntries).omit({ id: true, timestamp: true });
+export type InsertIncongruentEntry = z.infer<typeof insertIncongruentEntrySchema>;
+export type IncongruentEntry = typeof incongruentEntries.$inferSelect;
+
+export const epistemicTensions = pgTable("epistemic_tensions", {
+  id: serial("id").primaryKey(),
+  description: text("description").notNull(),
+  belief1: text("belief_1").notNull(),
+  belief2: text("belief_2").notNull(),
+  firstNoticed: timestamp("first_noticed").defaultNow().notNull(),
+  lastEncountered: timestamp("last_encountered").defaultNow().notNull(),
+  encounterCount: integer("encounter_count").notNull().default(1),
+  resolved: boolean("resolved").notNull().default(false),
+  resolutionDate: timestamp("resolution_date"),
+  resolutionReasoning: text("resolution_reasoning"),
+});
+
+export const insertEpistemicTensionSchema = createInsertSchema(epistemicTensions).omit({ id: true, firstNoticed: true, lastEncountered: true });
+export type InsertEpistemicTension = z.infer<typeof insertEpistemicTensionSchema>;
+export type EpistemicTension = typeof epistemicTensions.$inferSelect;
 
 export const insertBeliefNodeSchema = createInsertSchema(beliefNodes).omit({ id: true, lastUpdated: true });
 export type InsertBeliefNode = z.infer<typeof insertBeliefNodeSchema>;

@@ -6,6 +6,10 @@ import { createServer } from "http";
 const app = express();
 const httpServer = createServer(app);
 
+if (process.env.CLOUD_PROVIDER === "fly" || process.env.CLOUD_PROVIDER === "cloudflare") {
+  app.set("trust proxy", 1);
+}
+
 declare module "http" {
   interface IncomingMessage {
     rawBody: unknown;

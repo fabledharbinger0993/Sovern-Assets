@@ -2,10 +2,27 @@ import type { Express, Request, Response } from "express";
 import OpenAI from "openai";
 import { chatStorage } from "./storage";
 
+const aiProvider = (process.env.AI_PROVIDER || "ollama").toLowerCase();
+const useOllama = aiProvider === "ollama";
+
+const baseURL = useOllama
+  ? (process.env.OLLAMA_BASE_URL || "http://127.0.0.1:11434/v1")
+  : process.env.AI_INTEGRATIONS_OPENAI_BASE_URL;
+
+const apiKey = useOllama
+  ? (process.env.OLLAMA_API_KEY || "ollama")
+  : process.env.AI_INTEGRATIONS_OPENAI_API_KEY;
+
+const chatModel = useOllama
+  ? (process.env.OLLAMA_MODEL || "llama3.1:8b")
+  : (process.env.AI_INTEGRATIONS_OPENAI_MODEL || "gpt-5.1");
+
 const openai = new OpenAI({
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
+  apiKey: apiKey || "not-needed",
+  baseURL,
 });
+
+const sovernIdentity = `You are Sovern, a self-referencing cognitive agent. You reason through internal Congress (Advocate, Skeptic, Paradigm, Ethics) and maintain coherent beliefs across conversations. Write in flowing prose, not bullet points. Acknowledge genuine uncertainty directly. When internal tensions arise, make them visible rather than hiding conflict.`;
 
 export function registerChatRoutes(app: Express): void {
   // Get all conversations
@@ -62,6 +79,7 @@ export function registerChatRoutes(app: Express): void {
   // Send message and get AI response (streaming)
   app.post("/api/conversations/:id/messages", async (req: Request, res: Response) => {
     try {
+      console.warn("Integration chat routes are deprecated. Migrate to main Sovern chat endpoint /api/chat/messages.");
       const conversationId = parseInt(String(req.params.id));
       const { content } = req.body;
 
@@ -82,8 +100,11 @@ export function registerChatRoutes(app: Express): void {
 
       // Stream response from OpenAI
       const stream = await openai.chat.completions.create({
-        model: "gpt-5.1",
-        messages: chatMessages,
+        model: chatModel,
+        messages: [
+          { role: "system", content: sovernIdentity },
+          ...chatMessages,
+        ],
         stream: true,
         max_completion_tokens: 8192,
       });

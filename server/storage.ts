@@ -1,5 +1,18 @@
 import { db } from "./db";
-import { beliefNodes, chatMessages, logicEntries, memoryEntries, type InsertBeliefNode, type InsertChatMessage, type InsertLogicEntry, type InsertMemoryEntry } from "@shared/schema";
+import {
+  beliefNodes,
+  chatMessages,
+  logicEntries,
+  memoryEntries,
+  incongruentEntries,
+  epistemicTensions,
+  type InsertBeliefNode,
+  type InsertChatMessage,
+  type InsertLogicEntry,
+  type InsertMemoryEntry,
+  type InsertIncongruentEntry,
+  type InsertEpistemicTension,
+} from "@shared/schema";
 import { eq, desc } from "drizzle-orm";
 
 export interface IStorage {
@@ -18,6 +31,16 @@ export interface IStorage {
   getMemoryEntries(): Promise<typeof memoryEntries.$inferSelect[]>;
   getMemoryEntry(id: number): Promise<typeof memoryEntries.$inferSelect | undefined>;
   createMemoryEntry(entry: InsertMemoryEntry): Promise<typeof memoryEntries.$inferSelect>;
+
+  // Incongruent Log
+  getIncongruentEntries(): Promise<typeof incongruentEntries.$inferSelect[]>;
+  createIncongruentEntry(entry: InsertIncongruentEntry): Promise<typeof incongruentEntries.$inferSelect>;
+
+  // Epistemic Tensions
+  getTensions(filter?: { resolved?: boolean }): Promise<typeof epistemicTensions.$inferSelect[]>;
+  createTension(entry: InsertEpistemicTension): Promise<typeof epistemicTensions.$inferSelect>;
+  updateTension(id: number, changes: Partial<typeof epistemicTensions.$inferSelect>): Promise<typeof epistemicTensions.$inferSelect | undefined>;
+  findTension(belief1: string, belief2: string): Promise<typeof epistemicTensions.$inferSelect | undefined>;
 
   // Beliefs
   getBeliefNodes(): Promise<typeof beliefNodes.$inferSelect[]>;
@@ -68,6 +91,52 @@ export class DatabaseStorage implements IStorage {
     return created;
   }
 
+  async getIncongruentEntries() {
+    return await db!.select().from(incongruentEntries).orderBy(desc(incongruentEntries.timestamp));
+  }
+
+  async createIncongruentEntry(entry: InsertIncongruentEntry) {
+    const [created] = await db!.insert(incongruentEntries).values(entry).returning();
+    return created;
+  }
+
+  async getTensions(filter?: { resolved?: boolean }) {
+    const resolvedFilter = filter?.resolved;
+    if (typeof resolvedFilter === "boolean") {
+      return await db!
+        .select()
+        .from(epistemicTensions)
+        .where(eq(epistemicTensions.resolved, resolvedFilter))
+        .orderBy(desc(epistemicTensions.lastEncountered));
+    }
+    return await db!.select().from(epistemicTensions).orderBy(desc(epistemicTensions.lastEncountered));
+  }
+
+  async createTension(entry: InsertEpistemicTension) {
+    const [created] = await db!.insert(epistemicTensions).values(entry).returning();
+    return created;
+  }
+
+  async updateTension(id: number, changes: Partial<typeof epistemicTensions.$inferSelect>) {
+    const [updated] = await db!
+      .update(epistemicTensions)
+      .set({ ...changes })
+      .where(eq(epistemicTensions.id, id))
+      .returning();
+    return updated;
+  }
+
+  async findTension(belief1: string, belief2: string) {
+    const b1 = belief1.toLowerCase().trim();
+    const b2 = belief2.toLowerCase().trim();
+    const tensions = await db!.select().from(epistemicTensions).where(eq(epistemicTensions.resolved, false));
+    return tensions.find((tension) => {
+      const left = tension.belief1.toLowerCase().trim();
+      const right = tension.belief2.toLowerCase().trim();
+      return (left === b1 && right === b2) || (left === b2 && right === b1);
+    });
+  }
+
   async getBeliefNodes() {
     return await db!.select().from(beliefNodes).orderBy(desc(beliefNodes.weight), beliefNodes.stance);
   }
@@ -91,10 +160,14 @@ class MemoryStorage implements IStorage {
   private chat: (typeof chatMessages.$inferSelect)[] = [];
   private logic: (typeof logicEntries.$inferSelect)[] = [];
   private memory: (typeof memoryEntries.$inferSelect)[] = [];
+  private incongruent: (typeof incongruentEntries.$inferSelect)[] = [];
+  private tensions: (typeof epistemicTensions.$inferSelect)[] = [];
   private beliefs: (typeof beliefNodes.$inferSelect)[] = [];
   private messageId = 1;
   private logicId = 1;
   private memoryId = 1;
+  private incongruentId = 1;
+  private tensionId = 1;
   private beliefId = 1;
 
   async getMessages() {
@@ -183,9 +256,80 @@ class MemoryStorage implements IStorage {
       selfInsights: entry.selfInsights ?? [],
       learnedPatterns: entry.learnedPatterns ?? [],
       researchNotes: entry.researchNotes ?? "",
+      phenomenologicalUncertainty: entry.phenomenologicalUncertainty ?? null,
+      logicEntryId: entry.logicEntryId ?? null,
     } as typeof memoryEntries.$inferSelect;
     this.memory.push(created);
     return created;
+  }
+
+  async getIncongruentEntries() {
+    return [...this.incongruent].sort((a, b) => +new Date(b.timestamp) - +new Date(a.timestamp));
+  }
+
+  async createIncongruentEntry(entry: InsertIncongruentEntry) {
+    const created = {
+      id: this.incongruentId++,
+      messageId: entry.messageId,
+      congressConclusion: entry.congressConclusion,
+      egoExpression: entry.egoExpression,
+      reasoning: entry.reasoning,
+      relationalContext: entry.relationalContext,
+      timestamp: new Date(),
+    } as typeof incongruentEntries.$inferSelect;
+    this.incongruent.push(created);
+    return created;
+  }
+
+  async getTensions(filter?: { resolved?: boolean }) {
+    const data = [...this.tensions].sort((a, b) => +new Date(b.lastEncountered) - +new Date(a.lastEncountered));
+    if (typeof filter?.resolved === "boolean") {
+      return data.filter((item) => item.resolved === filter.resolved);
+    }
+    return data;
+  }
+
+  async createTension(entry: InsertEpistemicTension) {
+    const created = {
+      id: this.tensionId++,
+      description: entry.description,
+      belief1: entry.belief1,
+      belief2: entry.belief2,
+      firstNoticed: new Date(),
+      lastEncountered: new Date(),
+      encounterCount: entry.encounterCount ?? 1,
+      resolved: entry.resolved ?? false,
+      resolutionDate: entry.resolutionDate ?? null,
+      resolutionReasoning: entry.resolutionReasoning ?? null,
+    } as typeof epistemicTensions.$inferSelect;
+    this.tensions.push(created);
+    return created;
+  }
+
+  async updateTension(id: number, changes: Partial<typeof epistemicTensions.$inferSelect>) {
+    const tension = this.tensions.find((item) => item.id === id);
+    if (!tension) return undefined;
+
+    if (typeof changes.description === "string") tension.description = changes.description;
+    if (typeof changes.belief1 === "string") tension.belief1 = changes.belief1;
+    if (typeof changes.belief2 === "string") tension.belief2 = changes.belief2;
+    if (typeof changes.encounterCount === "number") tension.encounterCount = changes.encounterCount;
+    if (typeof changes.resolved === "boolean") tension.resolved = changes.resolved;
+    if (changes.resolutionDate !== undefined) tension.resolutionDate = changes.resolutionDate ?? null;
+    if (changes.resolutionReasoning !== undefined) tension.resolutionReasoning = changes.resolutionReasoning ?? null;
+    tension.lastEncountered = changes.lastEncountered ?? new Date();
+
+    return tension;
+  }
+
+  async findTension(belief1: string, belief2: string) {
+    const b1 = belief1.toLowerCase().trim();
+    const b2 = belief2.toLowerCase().trim();
+    return this.tensions.find((tension) => {
+      const left = tension.belief1.toLowerCase().trim();
+      const right = tension.belief2.toLowerCase().trim();
+      return !tension.resolved && ((left === b1 && right === b2) || (left === b2 && right === b1));
+    });
   }
 
   async getBeliefNodes() {

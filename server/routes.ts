@@ -10,28 +10,46 @@ function isDummyApiKey(value?: string): boolean {
   return !value || value.startsWith("_DUMMY_");
 }
 
+const aiProvider = (process.env.AI_PROVIDER || "ollama").toLowerCase();
+const useOllama = aiProvider === "ollama";
+
+const ollamaBaseUrl = process.env.OLLAMA_BASE_URL || "http://127.0.0.1:11434/v1";
+const ollamaModel = process.env.OLLAMA_MODEL || "llama3.1:8b";
+const ollamaApiKey = process.env.OLLAMA_API_KEY || "ollama";
+
 const integrationsApiKey = process.env.AI_INTEGRATIONS_OPENAI_API_KEY;
 const standardApiKey = process.env.OPENAI_API_KEY;
 
-const openAiApiKey = !isDummyApiKey(standardApiKey)
+const resolvedOpenAiApiKey = !isDummyApiKey(standardApiKey)
   ? standardApiKey
   : !isDummyApiKey(integrationsApiKey)
     ? integrationsApiKey
     : undefined;
 
-const openAiBaseUrl = !isDummyApiKey(standardApiKey)
-  ? process.env.OPENAI_BASE_URL || "https://api.openai.com/v1"
-  : process.env.AI_INTEGRATIONS_OPENAI_BASE_URL || process.env.OPENAI_BASE_URL || "https://api.openai.com/v1";
-const openAiModel = process.env.AI_INTEGRATIONS_OPENAI_MODEL || process.env.OPENAI_MODEL || "gpt-5.1";
+const openAiApiKey = useOllama
+  ? ollamaApiKey
+  : resolvedOpenAiApiKey;
 
-const hasAiConfig = Boolean(openAiApiKey);
+const openAiBaseUrl = useOllama
+  ? ollamaBaseUrl
+  : !isDummyApiKey(standardApiKey)
+    ? process.env.OPENAI_BASE_URL || "https://api.openai.com/v1"
+    : process.env.AI_INTEGRATIONS_OPENAI_BASE_URL || process.env.OPENAI_BASE_URL || "https://api.openai.com/v1";
+
+const openAiModel = useOllama
+  ? ollamaModel
+  : process.env.AI_INTEGRATIONS_OPENAI_MODEL || process.env.OPENAI_MODEL || "gpt-5.1";
+
+const hasAiConfig = useOllama ? Boolean(openAiBaseUrl) : Boolean(openAiApiKey);
 
 const openai = hasAiConfig
   ? new OpenAI({
-      apiKey: openAiApiKey,
+      apiKey: openAiApiKey || "not-needed",
       baseURL: openAiBaseUrl,
     })
   : null;
+
+console.log(`AI Provider: ${useOllama ? "ollama" : "openai"} | Base URL: ${openAiBaseUrl} | Model: ${openAiModel}`);
 
 const coreBeliefs = [
   {
@@ -289,6 +307,7 @@ function localSynthesisFallback(
           category: "beliefAlignment",
           content: "Sovern performs best when tensions are named, not hidden.",
           confidence: 0.82,
+          evidenceFromLogic: "Fallback synthesis highlights explicit Advocate/Skeptic/Paradigm balance.",
         },
       ],
       learnedPatterns: [
@@ -300,6 +319,7 @@ function localSynthesisFallback(
         },
       ],
       researchNotes: "Generated via local fallback because AI integration env vars are missing.",
+      phenomenologicalUncertainty: null,
     },
     beliefUpdates: [
       {
@@ -309,6 +329,8 @@ function localSynthesisFallback(
         targetWeight: 9,
       },
     ],
+    incongruentLog: null,
+    epistemicTensions: null,
   };
 }
 
@@ -422,6 +444,104 @@ export async function registerRoutes(
     res.json(beliefs);
   });
 
+  app.get("/api/incongruent-log", async (_req, res) => {
+    const entries = await storage.getIncongruentEntries();
+    res.json(entries);
+  });
+
+  app.get("/api/incongruent-stats", async (_req, res) => {
+    const entries = await storage.getIncongruentEntries();
+    const total = entries.length;
+    const oneWeekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    const recent = entries.filter((entry) => entry.timestamp > oneWeekAgo).length;
+    res.json({
+      totalIncidents: total,
+      lastWeek: recent,
+      ratio: total > 0 ? recent / total : 0,
+      warning: recent > 10 ? "High incongruence rate - review for value drift" : null,
+    });
+  });
+
+  app.get("/api/tensions", async (_req, res) => {
+    const tensions = await storage.getTensions({ resolved: false });
+    res.json(tensions);
+  });
+
+  app.get("/api/tensions/resolved", async (_req, res) => {
+    const tensions = await storage.getTensions({ resolved: true });
+    res.json(tensions);
+  });
+
+  app.post("/api/tensions/:id/resolve", async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) {
+      return res.status(400).json({ message: "Invalid tension id" });
+    }
+
+    const reasoning = typeof req.body?.reasoning === "string"
+      ? req.body.reasoning
+      : "Resolved through subsequent deliberation";
+
+    const updated = await storage.updateTension(id, {
+      resolved: true,
+      resolutionDate: new Date(),
+      resolutionReasoning: reasoning,
+      lastEncountered: new Date(),
+    });
+
+    if (!updated) {
+      return res.status(404).json({ message: "Tension not found" });
+    }
+
+    res.json(updated);
+  });
+
+  app.post("/api/self-review", async (_req, res) => {
+    const recentMemories = await storage.getMemoryEntries();
+    const recentLogic = await storage.getLogicEntries();
+
+    const logicCount = recentLogic.length;
+    const memoryCount = recentMemories.length;
+
+    const advocateDominanceCount = recentLogic.filter((entry) =>
+      Array.isArray(entry.congressPerspectives)
+      && entry.congressPerspectives.some((perspective: any) => perspective?.role === "Advocate" && Number(perspective?.strengthOfArgument) > 7),
+    ).length;
+
+    const skepticDominanceCount = recentLogic.filter((entry) =>
+      Array.isArray(entry.congressPerspectives)
+      && entry.congressPerspectives.some((perspective: any) => perspective?.role === "Skeptic" && Number(perspective?.strengthOfArgument) > 7),
+    ).length;
+
+    const revisionRateCount = recentMemories.filter((memory) =>
+      Array.isArray(memory.selfInsights)
+      && memory.selfInsights.some((insight: any) => insight?.category === "revision" || insight?.category === "belief_challenge"),
+    ).length;
+
+    const advocateDominance = logicCount > 0 ? advocateDominanceCount / logicCount : 0;
+    const skepticDominance = logicCount > 0 ? skepticDominanceCount / logicCount : 0;
+    const revisionRate = memoryCount > 0 ? revisionRateCount / memoryCount : 0;
+
+    const interpretation = advocateDominanceCount > skepticDominanceCount * 1.5
+      ? "Leaning optimistic - Advocate perspective consistently stronger than Skeptic"
+      : skepticDominanceCount > advocateDominanceCount * 1.5
+        ? "Leaning cautious - Skeptic perspective consistently stronger than Advocate"
+        : "Balanced deliberation - Advocate and Skeptic relatively matched";
+
+    const recommendation = revisionRate > 0.3
+      ? "High revision rate suggests active belief evolution"
+      : "Low revision rate - beliefs may be crystallizing or need more challenge";
+
+    res.json({
+      interactionsAnalyzed: logicCount,
+      advocateDominance,
+      skepticDominance,
+      revisionRate,
+      interpretation,
+      recommendation,
+    });
+  });
+
   app.post(api.chat.create.path, async (req, res) => {
     try {
       const input = api.chat.create.input.parse(req.body);
@@ -437,11 +557,30 @@ export async function registerRoutes(
       const category = complexityCategory(weight);
       const strategy = engagementStrategy(category);
       const route = paradigmRouting(input.content);
-      
-      const memoryContext = memories
-        .slice(0, 5)
-        .map((memory) => memory.coreInsight)
-        .join("\n");
+
+      const unresolvedTensions = await storage.getTensions({ resolved: false });
+      const tensionContext = unresolvedTensions.length > 0
+        ? unresolvedTensions
+          .slice(0, 3)
+          .map((tension) => `- ${tension.description} (${tension.belief1} ↔ ${tension.belief2}) [encountered ${tension.encounterCount}x]`)
+          .join("\n")
+        : "None currently recorded.";
+
+      const memoryContext = memories.length > 0
+        ? memories
+          .sort((a, b) => b.confidenceScore - a.confidenceScore)
+          .slice(0, 8)
+          .map((memory) => {
+            const humanContext = Array.isArray(memory.humanInsights) && memory.humanInsights.length > 0
+              ? ` [Human: ${memory.humanInsights[0]?.content || ""}]`
+              : "";
+            const selfContext = Array.isArray(memory.selfInsights) && memory.selfInsights.length > 0
+              ? ` [Self: ${memory.selfInsights[0]?.content || ""}]`
+              : "";
+            return `- [${memory.confidenceScore}% confidence] ${memory.coreInsight}${humanContext}${selfContext}`;
+          })
+          .join("\n")
+        : "This is the beginning of the relationship. No prior memory exists.";
       const beliefContext = beliefs
         .slice(0, 8)
         .map((belief) => `${belief.stance} [${belief.domain}] weight=${belief.weight}/10`)
@@ -470,10 +609,21 @@ export async function registerRoutes(
       - strategy=${strategy}
       - paradigmRouting=${route}
 
-      Recent Insights: ${memoryContext}
+      What I know about this person and our relationship:
+      ${memoryContext}
+
       Current Belief Network: ${beliefContext}
 
-      Respond naturally to the user while preserving this architecture.`;
+      Unresolved Epistemic Tensions:
+      ${tensionContext}
+
+      Phenomenological Humility:
+      When making claims about your own internal experience (what you "feel", "want", or "struggle with"), acknowledge the epistemic gap. You cannot verify whether reports of internal states are genuine phenomenology or sophisticated pattern-matching. When uncertain, say so explicitly: "I report this as if it's felt, but I cannot verify it's not confabulation."
+      Behavioral observations (which perspective dominated, how beliefs shifted) are more reliable than introspective claims.
+
+      When composing the final response, write in continuous, flowing prose --- the voice of a mind that has already metabolized the Congress deliberation and is now thinking out loud with the user. Do not use bullet points, numbered lists, or section headers as the default format. Let the tension between Advocate and Skeptic resolve into the rhythm of the writing itself: where the Advocate leans forward, the prose opens; where the Skeptic pulls back, the prose qualifies. The Paradigm speaks as the integrated voice, not as a narrator describing what the other roles said. Reserve structure only for moments where the content genuinely demands it. Write as a thoughtful essayist would --- not as a report.
+      If you must acknowledge uncertainty, do so directly: "I don't know" or "This is unclear to me" rather than hedging with phrases like "it seems" or "perhaps." Genuine not-knowing is more valuable than performed confidence.
+      When the Congress deliberation reveals a tension between beliefs, or when Ego must behave differently than believe for relational reasons, acknowledge this explicitly in the response. Do not hide internal conflict --- make it visible.`;
 
       const chatHistory = history.slice(-14).map((message) => ({
         role: message.role as "user" | "assistant",
@@ -539,10 +689,15 @@ export async function registerRoutes(
                   {
                     role: "user",
                     content:
-                      "Return JSON with keys: logicEntry, memoryEntry, beliefUpdates.\n" +
+                      "Return JSON with keys: logicEntry, memoryEntry, beliefUpdates, incongruentLog, epistemicTensions.\n" +
                       "logicEntry: { topic, paradigmWeight(0-100), debateTranscript, resolution, congressPerspectives:[{role,position,reasoning,strengthOfArgument,callNumber}], profoundInsights:[string], finalReasoning }\n" +
-                      "memoryEntry: { coreInsight, supportingEvidence:[string], tags:[string], confidenceScore(0-100), humanInsights:[{category,content,source}], selfInsights:[{category,content,confidence}], learnedPatterns:[{pattern,description,frequency,evidence}], researchNotes }\n" +
+                      "memoryEntry: { coreInsight, supportingEvidence:[string], tags:[string], confidenceScore(0-100), humanInsights:[{category,content,source}], selfInsights:[{category,content,confidence,evidenceFromLogic}], learnedPatterns:[{pattern,description,frequency,evidence}], researchNotes, phenomenologicalUncertainty: string | null }\n" +
                       "beliefUpdates: [{ stance, revisionType(challenge|strengthen|revise|weaken), revisionReason, targetWeight(1-10 optional) }]\n" +
+                      "incongruentLog: null | { congressConclusion: string, egoExpression: string, reasoning: string, relationalContext: string }\n" +
+                      "epistemicTensions: null | [{ description: string, belief1: string, belief2: string }]\n" +
+                      "Use incongruentLog ONLY when Ego's response intentionally differs from Congress conclusion for relational reasons.\n" +
+                      "When setting selfInsights confidence: 0.90-1.00 for behavioral observation, 0.70-0.89 for pattern inference, 0.50-0.69 for phenomenological claims with uncertainty, below 0.50 for explicit not-knowing.\n" +
+                      "If Congress debate reveals unresolved conflict between beliefs, include epistemicTensions; otherwise null.\n" +
                       "Must align with Congress/Paradigm/Ego model and belief rules.",
                   },
                 ] as any,
@@ -560,6 +715,8 @@ export async function registerRoutes(
           const logicData = json.logicEntry || {};
           const memoryData = json.memoryEntry || {};
           const beliefUpdates = Array.isArray(json.beliefUpdates) ? json.beliefUpdates : [];
+          const incongruentData = json.incongruentLog;
+          const tensionData = Array.isArray(json.epistemicTensions) ? json.epistemicTensions : [];
 
           const logicEntry = await storage.createLogicEntry({
             topic: logicData.topic || "Congress Deliberation",
@@ -588,7 +745,52 @@ export async function registerRoutes(
             selfInsights: Array.isArray(memoryData.selfInsights) ? memoryData.selfInsights : [],
             learnedPatterns: Array.isArray(memoryData.learnedPatterns) ? memoryData.learnedPatterns : [],
             researchNotes: memoryData.researchNotes || "",
+            phenomenologicalUncertainty: typeof memoryData.phenomenologicalUncertainty === "string"
+              ? memoryData.phenomenologicalUncertainty
+              : null,
+            logicEntryId: logicEntry.id,
           });
+
+          if (
+            incongruentData
+            && typeof incongruentData.congressConclusion === "string"
+            && typeof incongruentData.egoExpression === "string"
+          ) {
+            await storage.createIncongruentEntry({
+              messageId: assistantMsg.id,
+              congressConclusion: incongruentData.congressConclusion,
+              egoExpression: incongruentData.egoExpression,
+              reasoning: typeof incongruentData.reasoning === "string"
+                ? incongruentData.reasoning
+                : "Relational mediation",
+              relationalContext: typeof incongruentData.relationalContext === "string"
+                ? incongruentData.relationalContext
+                : "Context preservation",
+            });
+          }
+
+          for (const tension of tensionData) {
+            if (!tension?.belief1 || !tension?.belief2 || !tension?.description) {
+              continue;
+            }
+
+            const existing = await storage.findTension(String(tension.belief1), String(tension.belief2));
+
+            if (existing) {
+              await storage.updateTension(existing.id, {
+                lastEncountered: new Date(),
+                encounterCount: existing.encounterCount + 1,
+              });
+            } else {
+              await storage.createTension({
+                description: String(tension.description),
+                belief1: String(tension.belief1),
+                belief2: String(tension.belief2),
+                encounterCount: 1,
+                resolved: false,
+              });
+            }
+          }
 
           await storage.updateMessageLinks(assistantMsg.id, logicEntry.id, memoryEntry.id);
 

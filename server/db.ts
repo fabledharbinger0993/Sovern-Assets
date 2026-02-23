@@ -65,8 +65,20 @@ export async function ensureDatabaseSchema(): Promise<boolean> {
         human_insights JSONB NOT NULL DEFAULT '[]'::jsonb,
         self_insights JSONB NOT NULL DEFAULT '[]'::jsonb,
         learned_patterns JSONB NOT NULL DEFAULT '[]'::jsonb,
-        research_notes TEXT NOT NULL DEFAULT ''
+        research_notes TEXT NOT NULL DEFAULT '',
+        phenomenological_uncertainty TEXT,
+        logic_entry_id INTEGER
       );
+    `);
+
+    await pool.query(`
+      ALTER TABLE memory_entries
+      ADD COLUMN IF NOT EXISTS phenomenological_uncertainty TEXT;
+    `);
+
+    await pool.query(`
+      ALTER TABLE memory_entries
+      ADD COLUMN IF NOT EXISTS logic_entry_id INTEGER;
     `);
 
     await pool.query(`
@@ -79,6 +91,33 @@ export async function ensureDatabaseSchema(): Promise<boolean> {
         memory_entry_id INTEGER,
         tokens INTEGER DEFAULT 0,
         is_typing BOOLEAN DEFAULT FALSE
+      );
+    `);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS incongruent_entries (
+        id SERIAL PRIMARY KEY,
+        message_id INTEGER NOT NULL,
+        congress_conclusion TEXT NOT NULL,
+        ego_expression TEXT NOT NULL,
+        reasoning TEXT NOT NULL,
+        relational_context TEXT NOT NULL,
+        timestamp TIMESTAMP NOT NULL DEFAULT NOW()
+      );
+    `);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS epistemic_tensions (
+        id SERIAL PRIMARY KEY,
+        description TEXT NOT NULL,
+        belief_1 TEXT NOT NULL,
+        belief_2 TEXT NOT NULL,
+        first_noticed TIMESTAMP NOT NULL DEFAULT NOW(),
+        last_encountered TIMESTAMP NOT NULL DEFAULT NOW(),
+        encounter_count INTEGER NOT NULL DEFAULT 1,
+        resolved BOOLEAN NOT NULL DEFAULT FALSE,
+        resolution_date TIMESTAMP,
+        resolution_reasoning TEXT
       );
     `);
 
